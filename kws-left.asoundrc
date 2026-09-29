@@ -1,0 +1,11 @@
+</usr/share/alsa/alsa.conf>
+
+pcm.kws_left {
+    type route
+    slave {
+        pcm "hw:APE,0"
+        channels 2
+        format S16_LE
+    }
+    ttable.0.0 1
+}

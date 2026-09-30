@@ -30,12 +30,22 @@ def wait_for_keyword(command: list[str], keywords, env=None) -> str:
     )
     # 保留原始字节，避免读取边界截断中文 UTF-8 或跨块的 JSON 事件。
     recent = b""
+    volume_pending = b""
+    show_volume = env is not None and "SHERPA_KWS_VOLUME" in env
     try:
         while True:
             chunk = os.read(process.stderr.fileno(), 4096)
             if not chunk:
                 detail = recent.decode("utf-8", errors="replace")[-1200:]
                 raise RuntimeError(f"实时 KWS 意外退出:\n{detail}")
+            if show_volume:
+                # 只转发完整的音量行；跨块的日志保留到下一次读取。
+                volume_pending += chunk
+                lines = volume_pending.split(b"\n")
+                volume_pending = lines.pop()[-16000:]
+                for line in lines:
+                    if line.startswith(b"[volume]"):
+                        print(line.decode("utf-8", errors="replace"), flush=True)
             recent = (recent + chunk)[-16000:]
             matches = [
                 event.group(1)
@@ -63,18 +73,23 @@ def main():
     parser.add_argument("--mic-device", default=MIC_DEVICE)
     parser.add_argument("--speaker-device", default=SPEAKER_DEVICE)
     parser.add_argument("--once", action="store_true", help="识别并播放一次后退出，便于验收")
+    parser.add_argument("--volume-meter", action="store_true", help="同时打印 KWS 输入音量，需先运行 build_volume_meter.py")
     args = parser.parse_args()
 
     root = PROJECT_DIR
     greeting = root / "sounds/nanji.wav"
     sounds = {keyword: root / "sounds" / filename for keyword, filename in COMMAND_SOUNDS.items()}
     sherpa_dir = args.sherpa_dir.expanduser().resolve()
-    wake_command = realtime_command(sherpa_dir, root / "wake_keywords.txt", args.mic_device)
-    action_command = realtime_command(sherpa_dir, root / "command_keywords.txt", args.mic_device)
+    # 未启用音量时，继续调用原版可执行文件与原有参数。
+    meter_options = {"volume_meter": True} if args.volume_meter else {}
+    wake_command = realtime_command(sherpa_dir, root / "wake_keywords.txt", args.mic_device, **meter_options)
+    action_command = realtime_command(sherpa_dir, root / "command_keywords.txt", args.mic_device, **meter_options)
     # 仅虚拟左声道设备加载项目 ALSA 配置；显式设备沿用系统配置。
     env = None
     if args.mic_device == MIC_DEVICE:
         env = {**os.environ, "ALSA_CONFIG_PATH": str(root / "kws-left.asoundrc")}
+    if args.volume_meter:
+        env = {**(env if env is not None else os.environ), "SHERPA_KWS_VOLUME": "1"}
     for sound in (greeting, *sounds.values()):
         if not sound.is_file():
             parser.error(f"提示音不存在: {sound}")

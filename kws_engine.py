@@ -60,7 +60,8 @@ def recognize_photo(sherpa_dir: Path, keywords: Path, wav: Path):
     return output, found
 
 
-def realtime_command(sherpa_dir: Path, keywords: Path, device: str):
+def realtime_command(sherpa_dir: Path, keywords: Path, device: str, volume_meter: bool = False):
     """Build the existing ALSA streaming KWS command for this model."""
-    command = _keyword_command(sherpa_dir, keywords, "sherpa-onnx-keyword-spotter-alsa")
+    binary_name = "sherpa-onnx-keyword-spotter-alsa" + ("-volume" if volume_meter else "")
+    command = _keyword_command(sherpa_dir, keywords, binary_name)
     return [*command, device]

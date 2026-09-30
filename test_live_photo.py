@@ -25,6 +25,23 @@ class LivePhotoTests(unittest.TestCase):
         self.assertEqual(read.call_count, 2)
         process.terminate.assert_called_once()
 
+    def test_volume_lines_cross_chunks_without_interfering_with_keyword(self):
+        process = MagicMock()
+        process.stderr.fileno.return_value = 3
+        process.poll.return_value = None
+        chunks = [
+            b"[volume] RMS=1.0% peak=",
+            b"2.0% dBFS=-40.0 clip=0.00%\n",
+            '{"keyword":"拍照"}'.encode("utf-8"),
+        ]
+        with patch.object(live_photo.subprocess, "Popen", return_value=process), patch.object(
+            live_photo.os, "read", side_effect=chunks
+        ), redirect_stdout(io.StringIO()) as output:
+            keyword = live_photo.wait_for_keyword(["kws"], {"拍照"}, {"SHERPA_KWS_VOLUME": "1"})
+        self.assertEqual(keyword, "拍照")
+        self.assertEqual(output.getvalue(), "[volume] RMS=1.0% peak=2.0% dBFS=-40.0 clip=0.00%\n")
+        process.terminate.assert_called_once()
+
     def test_longer_command_wins_when_events_arrive_together(self):
         process = MagicMock()
         process.stderr.fileno.return_value = 3

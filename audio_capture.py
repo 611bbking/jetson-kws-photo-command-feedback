@@ -7,11 +7,13 @@ import sys
 import wave
 from pathlib import Path
 
+from app_config import AUDIO_CARD, DMA_INTERFACE, I2S_INTERFACE
+
 
 def configure_capture_route():
     """Route I2S2 input to the first ALSA capture stream (ADMAIF1)."""
     subprocess.run(
-        ["amixer", "-c", "APE", "cset", "name=ADMAIF1 Mux", "I2S2"],
+        ["amixer", "-c", AUDIO_CARD, "cset", f"name={DMA_INTERFACE} Mux", I2S_INTERFACE],
         check=True,
         stdout=subprocess.DEVNULL,
     )
@@ -39,6 +41,7 @@ def split_channels(source: Path):
 
     if sys.byteorder != "little":
         samples.byteswap()
+    # 双声道 PCM 按左、右交错排列；分别保留，不能只按响度挑选。
     left, right = samples[0::2], samples[1::2]
     if not left:
         raise ValueError("录音文件没有音频数据")
@@ -47,16 +50,16 @@ def split_channels(source: Path):
         return math.sqrt(sum(value * value for value in channel) / len(channel))
 
     outputs = []
-    for name, samples in (("左", left), ("右", right)):
+    for name, channel_samples in (("左", left), ("右", right)):
         destination = source.with_name(source.stem.removesuffix("-raw") + ("-left.wav" if name == "左" else "-right.wav"))
-        level = rms(samples)
-        clipped = sum(abs(value) >= 32000 for value in samples) / len(samples)
+        level = rms(channel_samples)
+        clipped = sum(abs(value) >= 32000 for value in channel_samples) / len(channel_samples)
         print(f"{name}声道 RMS={level:.1f}，削波比例={clipped:.1%}；文件: {destination}")
         with wave.open(str(destination), "wb") as wav:
             wav.setnchannels(1)
             wav.setsampwidth(2)
             wav.setframerate(rate)
-            wav.writeframes(samples.tobytes())
+            wav.writeframes(channel_samples.tobytes())
         outputs.append((name, destination))
     return outputs
 
@@ -64,6 +67,7 @@ def split_channels(source: Path):
 def capture_for_kws(destination: Path, device: str, seconds: int):
     """Record raw audio and return both mono candidates for recognition."""
     destination.parent.mkdir(parents=True, exist_ok=True)
+    # 原始录音用于复查，拆分文件不覆盖原始双声道证据。
     raw = destination.with_name(destination.stem + "-raw.wav")
     configure_capture_route()
     record_stereo(raw, device, seconds)

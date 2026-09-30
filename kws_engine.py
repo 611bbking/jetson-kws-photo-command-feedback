@@ -21,24 +21,36 @@ def model_files(sherpa_dir: Path, keywords: Path, binary_name="sherpa-onnx-keywo
     if missing:
         raise FileNotFoundError("缺少文件:\n" + "\n".join(missing))
 
-    # The checked-in keyword line is for this model's phone+ppinyin token set.
     available = {line.split()[0] for line in tokens.read_text(encoding="utf-8").splitlines() if line.strip()}
-    if not {"p", "āi", "zh", "ào"}.issubset(available):
-        raise ValueError("模型词表不包含‘拍照’所需 token，请重新生成关键词文件")
+    # @ 后是显示名称，不属于模型 token；注释行不参与词表检查。
+    required_tokens = {
+        token
+        for line in keywords.read_text(encoding="utf-8").splitlines()
+        if line.strip() and not line.lstrip().startswith("#")
+        for token in line.split("@", 1)[0].split()
+    }
+    missing_tokens = required_tokens - available
+    if missing_tokens:
+        raise ValueError(f"模型词表不包含关键词 token: {', '.join(sorted(missing_tokens))}")
     return binary, parts, tokens
+
+
+def _keyword_command(sherpa_dir: Path, keywords: Path, binary_name: str) -> list[str]:
+    """封装两种识别入口共有的模型参数；输入 WAV/设备由调用方追加。"""
+    binary, parts, tokens = model_files(sherpa_dir, keywords, binary_name)
+    return [
+        str(binary),
+        *(f"--{part}={parts[part]}" for part in MODEL_PARTS),
+        f"--tokens={tokens}",
+        f"--keywords-file={keywords}",
+    ]
 
 
 def recognize_photo(sherpa_dir: Path, keywords: Path, wav: Path):
     """Return the decoder output and whether it contains the requested word."""
-    binary, parts, tokens = model_files(sherpa_dir, keywords)
+    command = _keyword_command(sherpa_dir, keywords, "sherpa-onnx-keyword-spotter")
     result = subprocess.run(
-        [
-            str(binary),
-            *(f"--{part}={parts[part]}" for part in MODEL_PARTS),
-            f"--tokens={tokens}",
-            f"--keywords-file={keywords}",
-            str(wav),
-        ],
+        [*command, str(wav)],
         check=True,
         text=True,
         capture_output=True,
@@ -50,13 +62,5 @@ def recognize_photo(sherpa_dir: Path, keywords: Path, wav: Path):
 
 def realtime_command(sherpa_dir: Path, keywords: Path, device: str):
     """Build the existing ALSA streaming KWS command for this model."""
-    binary, parts, tokens = model_files(
-        sherpa_dir, keywords, binary_name="sherpa-onnx-keyword-spotter-alsa"
-    )
-    return [
-        str(binary),
-        *(f"--{part}={parts[part]}" for part in MODEL_PARTS),
-        f"--tokens={tokens}",
-        f"--keywords-file={keywords}",
-        device,
-    ]
+    command = _keyword_command(sherpa_dir, keywords, "sherpa-onnx-keyword-spotter-alsa")
+    return [*command, device]
